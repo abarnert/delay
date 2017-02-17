@@ -4,12 +4,15 @@ import functools
 import inspect
 
 _delayedtypes = {}
+_annotated = object()
 
-def delay(func):
-    try:
-        typ = func.__annotations__['return']
-    except KeyError:
-        raise TypeError('delay can only be called on annotated functions')
+def delay(func, typ=_annotated):
+    if typ is _annotated:
+        try:
+            typ = func.__annotations__['return']
+        except KeyError:
+            raise TypeError('delay can only be called on annotated functions')
+    # TODO: string types?
     if typ not in _delayedtypes:
         # TODO: Is dir good enough for a wrapped type? Obviously
         #       won't work for __getattr__, but then nothing will
@@ -24,7 +27,12 @@ def delay(func):
         methdict['__new__'] = __new__
         for name in dir(typ):
             method = getattr(typ, name)
-            if name != '__new__' and inspect.isroutine(method):
+            # TODO: Is this the right list? I'm sure __getattribute__
+            # needs special handling, although I don't think __getattr__
+            # and friends do. And __init__, for classes that re-init
+            # after construction?
+            if (name not in ('__new__', '__init__') and
+                inspect.isroutine(method)):
                 def make_wrapper(name, method):
                     @functools.wraps(method)
                     def wrapper(self, *args, **kw):
@@ -45,14 +53,33 @@ def delay(func):
         _delayedtypes[typ] = type(typ)(name, (object,), methdict)
     return _delayedtypes[typ](func)
 
-def f() -> int: return 2
-def g() -> int: return 3
+if __name__ == '__main__':
+    import typing
+    @delay
+    def thunk() -> typing.List[int]:
+        print("Help, I'm being evaluated!")
+        return [1, 2, 3]
+    h = thunk
+    print('Assigned it to a variable')
+    def donothing(x):
+        pass
+    donothing(thunk)
+    print('Passed it to a function')
+    if h:
+        pass
+    print('Did a bool test on it')
+    print(h)
 
-d = delay(f)
-print(d + 2)
-d2 = delay(g)
-print(2 + d2)
-
-@delay
-def h() -> int: return 4
-print(h)
+    class SillySeq:
+        def __getitem__(self, idx):
+            return idx
+    @delay
+    def silly() -> SillySeq:
+        return SillySeq()
+    i = iter(silly)
+    print(next(i))
+    
+    
+    d = delay(lambda: silly, typ=SillySeq)
+    i = iter(d)
+    print(next(i))
